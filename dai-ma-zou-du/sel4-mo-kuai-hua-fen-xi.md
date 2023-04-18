@@ -122,8 +122,6 @@ Rust的FFI和Link教程参考：
 
 这里直接放上lib.rs：
 
-````rust
-```rust
 ```rust
 #![no_std]
 #![crate_type = "staticlib"]
@@ -199,8 +197,6 @@ pub extern "C" fn strnlen(str: *const u8, max_len: usize) -> usize {
     }
 }
 ```
-```
-````
 
 然后编译生成静态库文件：
 
