@@ -103,7 +103,7 @@ void VISIBLE NO_INLINE halt(void)
 * idle\_thread
 * halt
 
-对内我们需要外部的一个函数接口：sbi\_shutdown。
+对内我们需要外部的一个函数接口：sbi\_shutdown。此外，我们还需要一些打印输出来显示我们的Rust模块能正常工作，因此还需要一个外部依赖：sbi\_console\_putchar。.
 
 我们新建一个rust lib crate，target与seL4的c编译环境保持一致为：
 
@@ -124,16 +124,44 @@ Rust的FFI和Link教程参考：
 
 ````rust
 ```rust
+```rust
 #![no_std]
 #![crate_type = "staticlib"]
 
 use core::arch::asm;
+use core::fmt::{self, Write};
+
 
 mod lang_item;
 
 #[link(name = "kernel_all.c")]
 extern {
     fn sbi_shutdown();
+    fn sbi_console_putchar(ch: usize);
+}
+
+
+struct Stdout;
+
+impl Write for Stdout {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for c in s.chars() {
+            unsafe {
+                sbi_console_putchar(c as usize);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn print(args: fmt::Arguments) {
+    Stdout.write_fmt(args).unwrap();
+}
+
+macro_rules! println {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::print(format_args!(concat!($fmt, "\r\n") $(, $($arg)+)?));
+    }
 }
 
 
@@ -141,7 +169,9 @@ extern {
 pub extern "C" fn idle_thread() {
     while true {
         unsafe {
+            println!("[idle_thread] hello from rust");
             asm!("wfi");
+            println!("[idle_thread] hello from rust");
         }
     }
 }
@@ -149,9 +179,26 @@ pub extern "C" fn idle_thread() {
 #[no_mangle]
 pub extern "C" fn halt() {
     unsafe {
+        println!("[halt] hello from rust");
         sbi_shutdown()
     }
 }
+
+
+#[no_mangle]
+pub extern "C" fn strnlen(str: *const u8, max_len: usize) -> usize {
+    unsafe {
+        println!("[strnlen] hello from rust");
+        let mut c = str;
+        let mut ans = 0;
+        while (*c) != 0 {
+            ans += 1;
+            c = c.add(1);
+        }
+        ans
+    }
+}
+```
 ```
 ````
 
@@ -161,40 +208,40 @@ pub extern "C" fn halt() {
 cargo build --release
 ```
 
-然后我们处理一下kernel\_all.c文件，将两个函数的实现定义为外部函数声明：
+然后我们处理一下原始的seL4项目，首先将Rust lib中以及提供的接口在C项目中删除定义，并声明为外部函数：
 
 ```c
-#line 1 "/home/ctrlz/workSpace/seL4/seL4test/kernel/src/arch/riscv/idle.c"
-/*
- * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
- * Copyright 2015, 2016 Hesham Almatary <heshamelmatary@gmail.com>
- *
- * SPDX-License-Identifier: GPL-2.0-only
- */
-
+// idle.c
 #include <config.h>
 #include <arch/sbi.h>
 
 extern void idle_thread(void);
 
-
 /** DONT_TRANSLATE */
 extern void VISIBLE NO_INLINE halt(void);
+
+// string.c
+extern word_t strnlen(const char *s, word_t maxlen);
+
 ```
 
-重新编译kernel\_all.c.obj：
+然后修改Kernel项目的CMake文件：
+
+<pre class="language-cmake"><code class="lang-cmake"><strong># kernel/CMakeLists.txt
+</strong><strong>link_directories("your_lib_path")
+</strong>...
+target_link_libraries(kernel.elf PRIVATE kernel_Config kernel_autoconf -lidle)
+</code></pre>
+
+然后重新构建和编译项目并运行测试：
 
 ```bash
-/usr/bin/ccache /home/ctrlz/software/riscv64-unknown-toolchain/bin/riscv64-unknown-elf-gcc --sysroot=/home/ctrlz/workSpace/seL4/seL4test/build  -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/plat/default -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/arch/riscv -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/arch/riscv/arch/64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/plat/spike -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/plat/spike/plat/64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/include -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/arch_include/riscv -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/sel4_arch_include/riscv64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/sel4_plat_include/spike -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/mode_include/64 -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/gen_config -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/autoconf -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/gen_headers -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/generated -D__KERNEL_64__ -march=rv64imac -mabi=lp64 -O3 -DNDEBUG -std=c99 -Wall -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wmissing-declarations -Wundef -Wpointer-arith -Wno-nonnull -nostdinc -ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables -fno-common -O2 -nostdlib -fno-pic -fno-pie -mcmodel=medany -msmall-data-limit=1024 -MD -MT kernel/CMakeFiles/kernel.elf.dir/kernel_all.c.obj -MF kernel/CMakeFiles/kernel.elf.dir/kernel_all.c.obj.d -o kernel/CMakeFiles/kernel.elf.dir/kernel_all.c.obj -c /home/ctrlz/workSpace/seL4/seL4test/build/kernel/kernel_all.c
+../init-build.sh -DPLATFORM=spike -DSIMULATION=TRUE
+ninja
+./simulate > test.txt
 ```
 
-然后重新链接kernel.elf，前半部分和之前的链接命令相同，只不过需要添加新的链接库：
-
-```bash
-/usr/bin/ccache /home/ctrlz/software/riscv64-unknown-toolchain/bin/riscv64-unknown-elf-gcc .......  -L"your_lib_path" -lidle -o kernel/kernel.elf
-```
-
-链接成功之后旧的kernel.elf文件就被覆盖，然后直接启动simulate进行测试：
+然后我们可以在test.txt中搜索带rust字符：
 
 ![](../.gitbook/assets/image.png)
 
