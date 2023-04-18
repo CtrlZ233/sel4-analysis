@@ -68,3 +68,134 @@ cd /home/ctrlz/workSpace/seL4test/build/kernel && /home/ctrlz/workSpace/seL4test
 
 
 
+### Rust重写idle文件并链接到kernel.elf
+
+下面以kernel中的idle.c文件为例，思考一下如何用Rust逐步重写sel4 kernel.
+
+idle.c十分简单，依赖也相对较少：
+
+```c
+void idle_thread(void)
+{
+    while (1) {
+        asm volatile("wfi");
+    }
+}
+
+/** DONT_TRANSLATE */
+void VISIBLE NO_INLINE halt(void)
+{
+#ifdef CONFIG_PRINTING
+    printf("halting...");
+#ifdef CONFIG_DEBUG_BUILD
+    debug_printKernelEntryReason();
+#endif /* CONFIG_DEBUG_BUILD */
+#endif /* CONFIG_PRINTING */
+
+    sbi_shutdown();
+
+    UNREACHABLE();
+}
+```
+
+首先我们需要确定，用Rust重写这个文件，对外我们需要提供两个接口：
+
+* idle\_thread
+* halt
+
+对内我们需要外部的一个函数接口：sbi\_shutdown。
+
+我们新建一个rust lib crate，target与seL4的c编译环境保持一致为：
+
+````toml
+```
+# idle/.cargo/config.toml
+[build]
+target = "riscv64imac-unknown-none-elf"
+```
+````
+
+Rust的FFI和Link教程参考：
+
+* [https://rustwiki.org/zh-CN/reference/linkage.html](https://rustwiki.org/zh-CN/reference/linkage.html)
+* [https://doc.rust-lang.org/nomicon/ffi.html](https://doc.rust-lang.org/nomicon/ffi.html)
+
+这里直接放上lib.rs：
+
+````rust
+```rust
+#![no_std]
+#![crate_type = "staticlib"]
+
+use core::arch::asm;
+
+mod lang_item;
+
+#[link(name = "kernel_all.c")]
+extern {
+    fn sbi_shutdown();
+}
+
+
+#[no_mangle]
+pub extern "C" fn idle_thread() {
+    while true {
+        unsafe {
+            asm!("wfi");
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn halt() {
+    unsafe {
+        sbi_shutdown()
+    }
+}
+```
+````
+
+然后编译生成静态库文件：
+
+```bash
+cargo build --release
+```
+
+然后我们处理一下kernel\_all.c文件，将两个函数的实现定义为外部函数声明：
+
+```c
+#line 1 "/home/ctrlz/workSpace/seL4/seL4test/kernel/src/arch/riscv/idle.c"
+/*
+ * Copyright 2020, Data61, CSIRO (ABN 41 687 119 230)
+ * Copyright 2015, 2016 Hesham Almatary <heshamelmatary@gmail.com>
+ *
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+
+#include <config.h>
+#include <arch/sbi.h>
+
+extern void idle_thread(void);
+
+
+/** DONT_TRANSLATE */
+extern void VISIBLE NO_INLINE halt(void);
+```
+
+重新编译kernel\_all.c.obj：
+
+```bash
+/usr/bin/ccache /home/ctrlz/software/riscv64-unknown-toolchain/bin/riscv64-unknown-elf-gcc --sysroot=/home/ctrlz/workSpace/seL4/seL4test/build  -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/plat/default -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/arch/riscv -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/arch/riscv/arch/64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/plat/spike -I/home/ctrlz/workSpace/seL4/seL4test/kernel/include/plat/spike/plat/64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/include -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/arch_include/riscv -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/sel4_arch_include/riscv64 -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/sel4_plat_include/spike -I/home/ctrlz/workSpace/seL4/seL4test/kernel/libsel4/mode_include/64 -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/gen_config -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/autoconf -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/gen_headers -I/home/ctrlz/workSpace/seL4/seL4test/build/kernel/generated -D__KERNEL_64__ -march=rv64imac -mabi=lp64 -O3 -DNDEBUG -std=c99 -Wall -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wmissing-declarations -Wundef -Wpointer-arith -Wno-nonnull -nostdinc -ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables -fno-common -O2 -nostdlib -fno-pic -fno-pie -mcmodel=medany -msmall-data-limit=1024 -MD -MT kernel/CMakeFiles/kernel.elf.dir/kernel_all.c.obj -MF kernel/CMakeFiles/kernel.elf.dir/kernel_all.c.obj.d -o kernel/CMakeFiles/kernel.elf.dir/kernel_all.c.obj -c /home/ctrlz/workSpace/seL4/seL4test/build/kernel/kernel_all.c
+```
+
+然后重新链接kernel.elf，前半部分和之前的链接命令相同，只不过需要添加新的链接库：
+
+```bash
+/usr/bin/ccache /home/ctrlz/software/riscv64-unknown-toolchain/bin/riscv64-unknown-elf-gcc .......  -L"your_lib_path" -lidle -o kernel/kernel.elf
+```
+
+链接成功之后旧的kernel.elf文件就被覆盖，然后直接启动simulate进行测试：
+
+![](../.gitbook/assets/image.png)
+
+测试通过，Rust重写idle.c文件完成！
