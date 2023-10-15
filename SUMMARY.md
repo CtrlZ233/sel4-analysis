@@ -13,6 +13,7 @@
   * [seL4test RISC-V下编译环境搭建（Qemu）](<代码走读/seL4test RISC-V下编译环境搭建（Qemu）.md>)
   * [seL4在RISC-V平台下的启动流程](dai-ma-zou-du/sel4-zai-riscv-ping-tai-xia-de-qi-dong-liu-cheng.md)
   * [seL4 模块化分析](dai-ma-zou-du/sel4-mo-kuai-hua-fen-xi.md)
+  * [seL4 IPC](dai-ma-zou-du/sel4-ipc.md)
 * [相关论文笔记](xiang-guan-lun-wen-bi-ji/README.md)
   * [Improving IPC by kernel design](xiang-guan-lun-wen-bi-ji/improving-ipc-by-kernel-design.md)
   * [Kernel Design for Isolation and Assurance of Physical Memory](<相关论文笔记/Kernel Design for Isolation and Assurance of Physical Memory.md>)
