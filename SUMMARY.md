@@ -10,6 +10,7 @@
   * [6. Notifications](sel4-tutorial/6.-notifications.md)
   * [7. Interrupts](sel4-tutorial/7.-interrupts.md)
 * [代码走读](dai-ma-zou-du/README.md)
+  * [reL4test RISCV-V下编译环境搭建](dai-ma-zou-du/rel4test-riscvv-xia-bian-yi-huan-jing-da-jian.md)
   * [seL4test RISC-V下编译环境搭建（Qemu）](<代码走读/seL4test RISC-V下编译环境搭建（Qemu）.md>)
   * [seL4在RISC-V平台下的启动流程](dai-ma-zou-du/sel4-zai-riscv-ping-tai-xia-de-qi-dong-liu-cheng.md)
   * [seL4 模块化分析](dai-ma-zou-du/sel4-mo-kuai-hua-fen-xi.md)
